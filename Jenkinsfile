@@ -47,17 +47,22 @@ pipeline {
                     )
                 ]) {
                     dir('ci-pipeline/ansible') {
-                        sh '''
-                          chmod 600 $SSH_KEY
+                        script {
+                            // Get backend IP from Terraform output
+                            backend_ip = sh(script: "terraform -chdir=../terraform output -raw backend_ip", returnStdout: true).trim()
+                            
+                            sh """
+                              chmod 600 \$SSH_KEY
+                              export ANSIBLE_HOST_KEY_CHECKING=False
 
-                          export ANSIBLE_HOST_KEY_CHECKING=False
-
-                          ansible-playbook \
-                            -i inventory \
-                            site.yml \
-                            --user=$SSH_USER \
-                            --private-key=$SSH_KEY
-                        '''
+                              ansible-playbook \
+                                -i inventory \
+                                site.yml \
+                                --user=\$SSH_USER \
+                                --private-key=\$SSH_KEY \
+                                --extra-vars "backend_ip=${backend_ip}"
+                            """
+                        }
                     }
                 }
             }
