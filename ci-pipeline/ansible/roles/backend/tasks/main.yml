@@ -1,10 +1,5 @@
 - name: Install Netdata
-  shell: curl -s https://my-netdata.io/kickstart.sh | bash
+  shell: |
+    curl -fsSL https://get.netdata.cloud/kickstart.sh | bash
   args:
-    creates: /usr/sbin/netdata
-
-- name: Ensure Netdata running
-  service:
-    name: netdata
-    state: started
-    enabled: yes
+    executable: /bin/bash
