@@ -1,14 +1,20 @@
-- name: Disable SELinux (Amazon Linux / RHEL)
+- name: Disable SELinux (RHEL-based)
   selinux:
     state: disabled
   when: ansible_os_family == "RedHat"
 
-- name: Stop firewalld (RHEL only)
+- name: Check if firewalld exists
+  command: systemctl list-unit-files firewalld.service
+  register: firewalld_check
+  failed_when: false
+  changed_when: false
+
+- name: Stop firewalld if present
   service:
     name: firewalld
     state: stopped
     enabled: false
-  when: ansible_os_family == "RedHat"
+  when: firewalld_check.rc == 0
 
 - name: Stop UFW (Ubuntu only)
   service:
