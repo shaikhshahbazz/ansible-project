@@ -5,7 +5,7 @@ pipeline {
 
     stage('Checkout') {
       steps {
-        git 'https://github.com/your-repo/devops-ci-challenge.git'
+        git 'https://github.com/shaikhshahbazz/ansible-project.git'
       }
     }
 
