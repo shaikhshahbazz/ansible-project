@@ -48,9 +48,18 @@ pipeline {
                 ]) {
                     dir('ci-pipeline/ansible') {
                         script {
-                            // Get backend IP from Terraform output
-                            backend_ip = sh(script: "terraform -chdir=../terraform output -raw backend_ip", returnStdout: true).trim()
-                            
+                            // Fetch backend IP safely from Terraform output
+                            def backend_ip = sh(
+                                script: "terraform -chdir=../terraform output -raw backend_ip || echo ''",
+                                returnStdout: true
+                            ).trim()
+
+                            if (!backend_ip) {
+                                error "❌ Terraform output 'backend_ip' not found! Make sure it's defined in Terraform."
+                            } else {
+                                echo "✅ Backend IP found: ${backend_ip}"
+                            }
+
                             sh """
                               chmod 600 \$SSH_KEY
                               export ANSIBLE_HOST_KEY_CHECKING=False
@@ -71,7 +80,7 @@ pipeline {
 
     post {
         success {
-            echo '🎉 Pipeline completed successfully!'
+            echo '🎉 Pipeline completed successfully without errors!'
         }
         failure {
             echo '❌ Pipeline failed. Check logs above.'
