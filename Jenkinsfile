@@ -1,89 +1,92 @@
-pipeline {
-    agent any
+provider "aws" {
+  region = "us-east-1"
+}
 
-    environment {
-        AWS_DEFAULT_REGION = "us-east-1"
-    }
+# --- VPC ---
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+  tags = { Name = "main-vpc" }
+}
 
-    stages {
+# --- Subnet ---
+resource "aws_subnet" "main" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  map_public_ip_on_launch = true
+  availability_zone       = "us-east-1a"
+  tags = { Name = "main-subnet" }
+}
 
-        stage('Checkout') {
-            steps {
-                git url: 'https://github.com/shaikhshahbazz/ansible-project.git',
-                    branch: 'main'
-            }
-        }
+# --- Security Group ---
+resource "aws_security_group" "allow_ssh_http" {
+  name        = "allow_ssh_http"
+  description = "Allow SSH and HTTP"
+  vpc_id      = aws_vpc.main.id
 
-        stage('Terraform Init') {
-            steps {
-                dir('ci-pipeline/terraform') {
-                    sh 'terraform init'
-                }
-            }
-        }
+  ingress {
+    description = "SSH"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
-        stage('Terraform Apply') {
-            steps {
-                withCredentials([
-                    string(credentialsId: 'AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
-                    string(credentialsId: 'AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY')
-                ]) {
-                    dir('ci-pipeline/terraform') {
-                        sh '''
-                          terraform apply -auto-approve
-                        '''
-                    }
-                }
-            }
-        }
+  ingress {
+    description = "HTTP"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
-        stage('Ansible Configure') {
-            steps {
-                withCredentials([
-                    sshUserPrivateKey(
-                        credentialsId: 'ssh-private-key',
-                        keyFileVariable: 'SSH_KEY',
-                        usernameVariable: 'SSH_USER'
-                    )
-                ]) {
-                    dir('ci-pipeline/ansible') {
-                        script {
-                            // Fetch backend IP safely from Terraform output
-                            def backend_ip = sh(
-                                script: "terraform -chdir=../terraform output -raw backend_ip || echo ''",
-                                returnStdout: true
-                            ).trim()
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
 
-                            if (!backend_ip) {
-                                error "❌ Terraform output 'backend_ip' not found! Make sure it's defined in Terraform."
-                            } else {
-                                echo "✅ Backend IP found: ${backend_ip}"
-                            }
+# --- Latest Amazon Linux 2 AMI ---
+data "aws_ami" "amazon_linux" {
+  most_recent = true
+  owners      = ["amazon"]
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+}
 
-                            sh """
-                              chmod 600 \$SSH_KEY
-                              export ANSIBLE_HOST_KEY_CHECKING=False
+# --- Frontend EC2 ---
+resource "aws_instance" "frontend" {
+  ami           = data.aws_ami.amazon_linux.id
+  instance_type = "t2.micro"
+  key_name      = "ansible"
+  subnet_id     = aws_subnet.main.id
+  security_groups = [aws_security_group.allow_ssh_http.name]
 
-                              ansible-playbook \
-                                -i inventory \
-                                site.yml \
-                                --user=\$SSH_USER \
-                                --private-key=\$SSH_KEY \
-                                --extra-vars "backend_ip=${backend_ip}"
-                            """
-                        }
-                    }
-                }
-            }
-        }
-    }
+  tags = { Name = "frontend" }
+}
 
-    post {
-        success {
-            echo '🎉 Pipeline completed successfully without errors!'
-        }
-        failure {
-            echo '❌ Pipeline failed. Check logs above.'
-        }
-    }
+# --- Backend EC2 ---
+resource "aws_instance" "backend" {
+  ami           = data.aws_ami.amazon_linux.id
+  instance_type = "t2.micro"
+  key_name      = "ansible"
+  subnet_id     = aws_subnet.main.id
+  security_groups = [aws_security_group.allow_ssh_http.name]
+
+  tags = { Name = "backend" }
+}
+
+# --- Ansible inventory ---
+resource "local_file" "ansible_inventory" {
+  content = <<EOT
+[frontend]
+frontend ansible_host=${aws_instance.frontend.public_ip} ansible_user=ec2-user
+
+[backend]
+backend ansible_host=${aws_instance.backend.public_ip} ansible_user=ec2-user
+EOT
+  filename = "${path.module}/ansible_inventory.ini"
 }
